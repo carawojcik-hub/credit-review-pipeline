@@ -19,6 +19,7 @@ import {
   TableHead,
   TableRow,
   TableSortLabel,
+  TablePagination,
   TextField,
   Tooltip,
   Typography,
@@ -120,6 +121,30 @@ const REQUIRED_LEVELS = ["Manager", "Director", "VP", "President"];
 const EXCEPTION_OPTIONS = [0, 1, 2, 3, 4, 5];
 const PROTOTYPE_TODAY_TS = Date.parse("2026-03-20T12:00:00Z");
 
+function getDaysToDue(dueDate) {
+  const dueTs = new Date(dueDate ?? 0).getTime();
+  if (!Number.isFinite(dueTs) || dueTs <= 0) return null;
+  const msPerDay = 24 * 60 * 60 * 1000;
+  return Math.ceil((dueTs - PROTOTYPE_TODAY_TS) / msPerDay);
+}
+
+function getSlaBucket(daysToDue) {
+  if (daysToDue == null) return null;
+  if (daysToDue < 0) return "Overdue";
+  if (daysToDue === 0) return "Due today";
+  if (daysToDue <= 3) return "Due soon";
+  if (daysToDue <= 7) return "Upcoming";
+  return "On track";
+}
+
+function getSlaChipProps(bucket) {
+  if (bucket === "Overdue") return { color: "error", variant: "filled" };
+  if (bucket === "Due today") return { color: "warning", variant: "filled" };
+  if (bucket === "Due soon") return { color: "warning", variant: "outlined" };
+  if (bucket === "Upcoming") return { color: "info", variant: "outlined" };
+  return { color: "success", variant: "outlined" };
+}
+
 function requiredSortRank(level) {
   // Higher rank means higher authority
   const rankMap = {
@@ -194,6 +219,8 @@ export default function PipelineTable({
   const [selectedOOODealIds, setSelectedOOODealIds] = useState([]);
 
   const [popover, setPopover] = useState({ key: null, anchorEl: null });
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(15);
 
   const filterAnchorOpen = Boolean(popover.anchorEl);
   const closePopover = () => setPopover({ key: null, anchorEl: null });
@@ -378,6 +405,17 @@ export default function PipelineTable({
     () => filteredSortedDeals.map(({ deal }) => deal.id),
     [filteredSortedDeals]
   );
+
+  const pagedDeals = useMemo(() => {
+    const start = page * rowsPerPage;
+    const end = start + rowsPerPage;
+    return filteredSortedDeals.slice(start, end);
+  }, [filteredSortedDeals, page, rowsPerPage]);
+
+  useEffect(() => {
+    const maxPage = Math.max(0, Math.ceil(filteredSortedDeals.length / rowsPerPage) - 1);
+    if (page > maxPage) setPage(maxPage);
+  }, [filteredSortedDeals.length, rowsPerPage, page]);
 
   useEffect(() => {
     setSelectedOOODealIds((prev) => prev.filter((id) => filteredDealIds.includes(id)));
@@ -587,6 +625,9 @@ export default function PipelineTable({
         />
 
         <Box sx={{ flex: 1 }} />
+        <Typography variant="body2" color="text.secondary">
+          {filteredSortedDeals.length} deal{filteredSortedDeals.length === 1 ? "" : "s"}
+        </Typography>
         <Button
           size="small"
           onClick={() =>
@@ -819,11 +860,14 @@ export default function PipelineTable({
           </TableHead>
 
           <TableBody>
-            {filteredSortedDeals.map(({ deal, requiredLevel, explanation }) => {
+            {pagedDeals.map(({ deal, requiredLevel, explanation }) => {
               const isMine = Boolean(deal.assignedReviewerId && deal.assignedReviewerId === currentUser.id);
               const isNewAssignment = Boolean(deal.isNewAssignment);
               const exc = Number(deal.exceptionRating ?? 0);
               const isHighRisk = exc >= 4 || requiredLevel === "VP" || requiredLevel === "President";
+              const daysToDue = getDaysToDue(deal.dueDate);
+              const slaBucket = getSlaBucket(daysToDue);
+              const isOverdue = slaBucket === "Overdue";
               const selected = deal.id === selectedDealId;
               const assignee = deal.assignedReviewerId ? reviewerById[deal.assignedReviewerId] : null;
 
@@ -837,7 +881,11 @@ export default function PipelineTable({
                   onClick={() => onSelectDeal?.(deal.id)}
                   sx={{
                     cursor: "pointer",
-                    bgcolor: isMine ? "rgba(25, 118, 210, 0.08)" : undefined,
+                    bgcolor: isOverdue
+                      ? (theme) => alpha(theme.palette.error.main, 0.08)
+                      : isMine
+                        ? "rgba(25, 118, 210, 0.08)"
+                        : undefined,
                     outline: selected ? "2px solid" : undefined,
                     outlineColor: selected ? "primary.main" : undefined,
                     outlineOffset: selected ? "-2px" : undefined,
@@ -963,7 +1011,24 @@ export default function PipelineTable({
                     </Box>
                   </TableCell>
 
-                  <TableCell>{formatDate(deal.dueDate)}</TableCell>
+                  <TableCell>
+                    <Stack spacing={0.35}>
+                      <Typography variant="body2">{formatDate(deal.dueDate)}</Typography>
+                      {slaBucket ? (
+                        <Tooltip
+                          title={daysToDue < 0 ? `${Math.abs(daysToDue)}d overdue` : `${daysToDue}d to due`}
+                          arrow
+                        >
+                          <Chip
+                            size="small"
+                            label={slaBucket}
+                            variant={getSlaChipProps(slaBucket).variant}
+                            color={getSlaChipProps(slaBucket).color}
+                          />
+                        </Tooltip>
+                      ) : null}
+                    </Stack>
+                  </TableCell>
 
                   <TableCell>
                     <Stack direction="row" spacing={0.5} alignItems="center">
@@ -1031,6 +1096,22 @@ export default function PipelineTable({
           </TableBody>
         </Table>
       </TableContainer>
+      <TablePagination
+        component="div"
+        count={filteredSortedDeals.length}
+        page={page}
+        onPageChange={(event, newPage) => {
+          void event;
+          setPage(newPage);
+        }}
+        rowsPerPage={rowsPerPage}
+        onRowsPerPageChange={(event) => {
+          const next = Number(event.target.value);
+          setRowsPerPage(next);
+          setPage(0);
+        }}
+        rowsPerPageOptions={[15, 25, 50]}
+      />
 
       {/* Deal assignment popover */}
       <Popover

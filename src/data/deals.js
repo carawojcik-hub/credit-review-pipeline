@@ -716,6 +716,16 @@ const EXCEPTION_RATING_OVERRIDES = {
   "D-033": 2,
 };
 
+// Demo: repeat-borrower + prior reviewer must match assignee for `hasBorrowerFamiliarityAssignment`.
+const REPEAT_BORROWER_OVERRIDES = {
+  // Sam Rivera (R-002) — Submitted retail deal shows borrower familiarity in My queue.
+  "D-033": true,
+};
+
+const PRIOR_BORROWER_REVIEWER_OVERRIDES = {
+  "D-033": "R-002",
+};
+
 const AMOUNT_OVERRIDES = {
   "D-011": 18_400_000,
   "D-014": 19_600_000,
@@ -763,7 +773,9 @@ export const deals = baseDeals.map((d) => {
   const rnd = mulberry32(seed);
 
   const loanNumber = seededInt(rnd, 1_000_000, 9_999_999);
-  const repeatBorrower = rnd() < 0.32;
+  const repeatBorrower = Object.prototype.hasOwnProperty.call(REPEAT_BORROWER_OVERRIDES, d.id)
+    ? REPEAT_BORROWER_OVERRIDES[d.id]
+    : rnd() < 0.32;
   const producer = seededPick(rnd, PRODUCERS);
   const underwriter = d.stage === DEAL_STAGE.QUOTED ? null : seededPick(rnd, UNDERWRITERS);
   const borrowerName = deriveBorrowerName(rnd);
@@ -789,7 +801,8 @@ export const deals = baseDeals.map((d) => {
     d.status === "Unassigned" || d.status == null ? DEAL_STATUS.ASSIGNED : d.status;
   const priorBorrowerReviewerId =
     repeatBorrower && d.stage === DEAL_STAGE.SUBMITTED
-      ? pickDeterministicIdFromPool(`${borrowerName}:prior-reviewer`, eligibleReviewerIds)
+      ? (PRIOR_BORROWER_REVIEWER_OVERRIDES[d.id] ??
+        pickDeterministicIdFromPool(`${borrowerName}:prior-reviewer`, eligibleReviewerIds))
       : null;
 
   let assignedReviewerId = null;
